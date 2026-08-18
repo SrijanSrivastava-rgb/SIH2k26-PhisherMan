@@ -1,0 +1,112 @@
+// PhisherMan Prisma Database Schema
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  name         String
+  passwordHash String
+  role         String        @default("USER")
+  avatar       String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  scans        ScanResult[]
+  settings     UserSettings?
+}
+
+model ScanResult {
+  id            String   @id @default(uuid())
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  url           String
+  domain        String
+  ipAddress     String?
+  status        String   @default("COMPLETED") // PENDING, SCANNING, COMPLETED, FAILED
+  overallScore  Int      @default(0) // 0 to 100
+  verdict       String   @default("SAFE") // SAFE, SUSPICIOUS, PHISHING, QUARANTINED
+  dnsData       String   @default("{}") // JSON payload
+  whoisData     String   @default("{}") // JSON payload
+  sslData       String   @default("{}") // JSON payload
+  domData       String   @default("{}") // JSON payload
+  visualData    String   @default("{}") // JSON payload
+  aiExplanation String   @default("")
+  stepTimings   String   @default("{}") // JSON payload
+  createdAt     DateTime @default(now())
+}
+
+model ThreatCampaign {
+  id               String   @id @default(uuid())
+  name             String
+  target           String
+  threatLevel      String   @default("HIGH") // LOW, MEDIUM, HIGH, CRITICAL
+  description      String
+  status           String   @default("ACTIVE") // ACTIVE, MITIGATED
+  maliciousDomains String   @default("[]") // JSON string array
+  maliciousIPs     String   @default("[]") // JSON string array
+  iocs             String   @default("[]") // JSON string array
+  originLat        Float
+  originLng        Float
+  targetLat        Float
+  targetLng        Float
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ThreatPing {
+  id            String   @id @default(uuid())
+  sourceIp      String
+  targetIp      String
+  sourceCountry String
+  targetCountry String
+  sourceLat     Float
+  sourceLng     Float
+  targetLat     Float
+  targetLng     Float
+  threatType    String   @default("Phishing")
+  severity      String   @default("HIGH")
+  timestamp     DateTime @default(now())
+}
+
+model UserSettings {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  autoQuarantine     Boolean  @default(true)
+  scanTimeoutSeconds Int      @default(30)
+  alertEmail         String?
+  customRules        String   @default("{}")
+  apiKeys            String   @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model PhishingDataset {
+  id                  Int      @id @default(autoincrement())
+  url                 String
+  domain              String
+  label               Int      // 0 = legit, 1 = phishing
+  source              String?
+  targetBrand         String?
+  urlLength           Int?
+  domainLength        Int?
+  numDots             Int?
+  numHyphens          Int?
+  numDigits           Int?
+  hasIpAddress        Boolean? @default(false)
+  hasAtSymbol         Boolean? @default(false)
+  hasHttps            Boolean? @default(true)
+  subdomainCount      Int?
+  tld                 String?
+  isPunycode          Boolean? @default(false)
+  minBrandLevenshtein Int?
+  closestBrand        String?
+  createdAt           DateTime @default(now())
+}
+
