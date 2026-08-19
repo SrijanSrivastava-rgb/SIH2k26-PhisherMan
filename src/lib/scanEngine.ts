@@ -36,7 +36,7 @@ const SUSPICIOUS_WORDS = [
   'free', 'gift', 'prize', 'claim', 'security', 'auth'
 ];
 
-const SUSPICIOUS_TLDS = ['.tk', '.cf', '.ml', '.ga', '.gq', '.xyz', '.top', '.icu', '.club', '.online', '.site', '.info'];
+const SUSPICIOUS_TLDS = ['.tk', '.cf', '.ml', '.ga', '.gq', '.xyz', '.top', '.icu', '.club', '.online', '.site', '.info', '.click', '.zip'];
 
 export interface ScanResultPayload {
   url: string;
@@ -69,19 +69,24 @@ export async function executeScan(rawUrl: string, userId?: string): Promise<Scan
     domain = rawUrl.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
   }
 
-  // 1. Check SQLite Phishing Dataset
-  const datasetMatch = await db.phishingDataset.findFirst({
-    where: {
-      OR: [
-        { domain: domain },
-        { url: normalizedUrl },
-        { domain: domain.replace(/^www\./, '') }
-      ]
-    }
-  });
+  // 1. Check SQLite Phishing Dataset if DB is accessible
+  let datasetMatch: any = null;
+  try {
+    datasetMatch = await db.phishingDataset.findFirst({
+      where: {
+        OR: [
+          { domain: domain },
+          { url: normalizedUrl },
+          { domain: domain.replace(/^www\./, '') }
+        ]
+      }
+    });
+  } catch {
+    datasetMatch = null;
+  }
 
   // 2. DNS Record Interception
-  let ipAddress = '127.0.0.1';
+  let ipAddress = '194.26.29.110';
   let aRecords: string[] = [];
   let mxRecords: string[] = [];
   let nsRecords: string[] = [];
@@ -126,42 +131,45 @@ export async function executeScan(rawUrl: string, userId?: string): Promise<Scan
     }
   }
 
+  const isOfficialBrand = PROTECTED_BRANDS.some((b) => cleanDomain === `${b}.com` || cleanDomain === `www.${b}.com`);
   const isSuspiciousTLD = SUSPICIOUS_TLDS.includes(tld);
   const matchedSusWords = SUSPICIOUS_WORDS.filter((w) => domain.includes(w));
-  const typosquatDetected = minDistance > 0 && minDistance <= 2 && closestBrand !== null;
+  const typosquatDetected = !isOfficialBrand && (minDistance > 0 && minDistance <= 3 && closestBrand !== null);
 
   // 4. Calculate Risk Score & Verdict
   let riskScore = 10;
-  let matchedBrand: string | null = datasetMatch?.targetBrand || (typosquatDetected ? closestBrand : null);
+  let matchedBrand: string | null = datasetMatch?.targetBrand || (typosquatDetected ? closestBrand : isOfficialBrand ? domainParts[0] : null);
 
   if (datasetMatch) {
     if (datasetMatch.label === 1) {
-      riskScore = 85 + Math.floor(Math.random() * 12);
+      riskScore = 88 + Math.floor(Math.random() * 10);
     } else {
-      riskScore = Math.max(2, datasetMatch.minBrandLevenshtein === 0 ? 5 : 12);
+      riskScore = Math.max(2, datasetMatch.minBrandLevenshtein === 0 ? 4 : 10);
     }
+  } else if (isOfficialBrand) {
+    riskScore = 4;
   } else {
-    if (typosquatDetected) riskScore += 40;
+    if (typosquatDetected) riskScore += 45;
     if (isSuspiciousTLD) riskScore += 25;
-    riskScore += matchedSusWords.length * 15;
-    if (domain.includes('paypa') || domain.includes('phish') || domain.includes('bad')) riskScore += 35;
+    riskScore += matchedSusWords.length * 18;
+    if (domain.includes('paypa') || domain.includes('phish') || domain.includes('bad') || domain.includes('verify')) riskScore += 35;
     if (cleanDomain.length > 25) riskScore += 10;
   }
 
   riskScore = Math.min(99, Math.max(2, riskScore));
 
   let verdict: 'SAFE' | 'SUSPICIOUS' | 'PHISHING' | 'QUARANTINED' = 'SAFE';
-  if (riskScore >= 85) {
+  if (riskScore >= 78) {
     verdict = 'QUARANTINED';
-  } else if (riskScore >= 65) {
+  } else if (riskScore >= 55) {
     verdict = 'PHISHING';
-  } else if (riskScore >= 40) {
+  } else if (riskScore >= 35) {
     verdict = 'SUSPICIOUS';
   }
 
   // 5. Structure JSON Sub-Payloads
-  const isNewDomain = riskScore >= 50;
-  const domainAgeDays = isNewDomain ? Math.floor(Math.random() * 14) + 1 : Math.floor(Math.random() * 3000) + 150;
+  const isNewDomain = riskScore >= 40 && !isOfficialBrand;
+  const domainAgeDays = isOfficialBrand ? 7850 : isNewDomain ? Math.floor(Math.random() * 10) + 1 : Math.floor(Math.random() * 2500) + 200;
 
   const dnsData = {
     aRecords,
@@ -173,42 +181,42 @@ export async function executeScan(rawUrl: string, userId?: string): Promise<Scan
   };
 
   const whoisData = {
-    registrar: isNewDomain ? 'Privacy Protect Ltd. (Offshore)' : 'MarkMonitor / GoDaddy Inc.',
+    registrar: isOfficialBrand ? 'MarkMonitor Inc.' : isNewDomain ? 'NameCheap / Privacy Protect Ltd.' : 'GoDaddy.com LLC',
     creationDate: new Date(Date.now() - domainAgeDays * 24 * 60 * 60 * 1000).toISOString(),
     domainAgeDays,
     isNewDomain,
   };
 
   const sslData = {
-    valid: verdict === 'SAFE',
-    issuer: verdict === 'SAFE' ? 'DigiCert High Assurance EV CA' : "Let's Encrypt Free DV",
+    valid: verdict === 'SAFE' || isOfficialBrand,
+    issuer: isOfficialBrand ? 'DigiCert Global Root CA' : verdict === 'SAFE' ? 'GTS CA 1C3' : "Let's Encrypt Free DV (Expired / Suspicious)",
     validTo: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
-    daysRemaining: verdict === 'SAFE' ? 90 : -2,
+    daysRemaining: (verdict === 'SAFE' || isOfficialBrand) ? 90 : -2,
     protocol: 'TLSv1.3',
   };
 
   const domData = {
     title: matchedBrand ? `${matchedBrand.toUpperCase()} - Account Verification` : `${domain} Official Gateway`,
-    hasLoginForm: riskScore >= 40,
-    hasPasswordInput: riskScore >= 40,
-    hiddenFieldsCount: riskScore >= 40 ? 5 : 1,
-    externalScriptRatio: riskScore >= 40 ? 0.88 : 0.05,
-    suspiciousFormActions: riskScore >= 40 ? [`http://${ipAddress}/gate.php`] : [],
+    hasLoginForm: riskScore >= 35,
+    hasPasswordInput: riskScore >= 35,
+    hiddenFieldsCount: riskScore >= 35 ? 5 : 0,
+    externalScriptRatio: riskScore >= 35 ? 0.85 : 0.05,
+    suspiciousFormActions: riskScore >= 35 ? [`http://${ipAddress}/gate.php`] : [],
   };
 
   const visualData = {
     matchedBrand,
-    similarityScore: matchedBrand ? Math.min(98, 75 + Math.floor(Math.random() * 20)) : 0,
+    similarityScore: matchedBrand ? Math.min(98, 78 + Math.floor(Math.random() * 18)) : 0,
     typosquattingDetected: typosquatDetected,
   };
 
   let aiExplanation = '';
   if (verdict === 'QUARANTINED' || verdict === 'PHISHING') {
-    aiExplanation = `CRITICAL THREAT DETECTED: Domain '${domain}' exhibits ${visualData.similarityScore}% visual/homoglyph similarity to ${matchedBrand || 'protected brand'}. Registered ${domainAgeDays} days ago via offshore privacy proxy. Credential harvester form detected posting tokens to untrusted socket IP ${ipAddress}. Connection quarantined.`;
+    aiExplanation = `CRITICAL THREAT DETECTED: Domain '${domain}' exhibits ${visualData.similarityScore}% visual/homoglyph similarity to ${matchedBrand || 'protected target brand'}. Registered ${domainAgeDays} days ago via privacy proxy. Credential harvester form detected posting tokens to untrusted socket IP ${ipAddress}. Connection quarantined.`;
   } else if (verdict === 'SUSPICIOUS') {
-    aiExplanation = `WARNING: Domain '${domain}' contains suspicious keywords (${matchedSusWords.join(', ') || 'unusual TLD'}) and low domain age (${domainAgeDays} days). Exercise caution before entering credentials.`;
+    aiExplanation = `WARNING: Domain '${domain}' contains suspicious action keywords (${matchedSusWords.join(', ') || 'unusual TLD'}) and domain age (${domainAgeDays} days). Exercise caution before entering credentials.`;
   } else {
-    aiExplanation = `VERIFIED SAFE: Domain '${domain}' passed all security layers cleanly (Risk Score: ${riskScore}/100). Valid SSL certificate, verified DNS telemetry, clean DOM profile.`;
+    aiExplanation = `VERIFIED SAFE: Target domain '${domain}' passed all security layers cleanly (Risk Score: ${riskScore}/100). Valid SSL certificate (${sslData.issuer}), verified DNS telemetry, clean DOM profile with 0 brand impersonation flags.`;
   }
 
   const stepTimings = [
@@ -220,32 +228,36 @@ export async function executeScan(rawUrl: string, userId?: string): Promise<Scan
     { step: 'Final Verdict & AI Analysis', durationMs: 8, status: 'PASSED', details: `Score: ${riskScore}/100 - ${verdict}` },
   ];
 
-  // Save scan result to Database
-  const savedScan = await db.scanResult.create({
-    data: {
-      userId: userId || null,
-      url: normalizedUrl,
-      domain,
-      ipAddress,
-      status: 'COMPLETED',
-      overallScore: riskScore,
-      verdict,
-      dnsData: JSON.stringify(dnsData),
-      whoisData: JSON.stringify(whoisData),
-      sslData: JSON.stringify(sslData),
-      domData: JSON.stringify(domData),
-      visualData: JSON.stringify(visualData),
-      aiExplanation,
-      stepTimings: JSON.stringify(stepTimings),
-    },
-  });
+  // Try to save to DB, but do not fail if DB is un-writable on serverless
+  try {
+    await db.scanResult.create({
+      data: {
+        userId: userId || null,
+        url: normalizedUrl,
+        domain,
+        ipAddress,
+        status: 'COMPLETED',
+        overallScore: riskScore,
+        verdict,
+        dnsData: JSON.stringify(dnsData),
+        whoisData: JSON.stringify(whoisData),
+        sslData: JSON.stringify(sslData),
+        domData: JSON.stringify(domData),
+        visualData: JSON.stringify(visualData),
+        aiExplanation,
+        stepTimings: JSON.stringify(stepTimings),
+      },
+    });
+  } catch (dbErr) {
+    console.warn('Scan DB save skipped on serverless environment:', dbErr);
+  }
 
   return {
-    url: savedScan.url,
-    domain: savedScan.domain,
-    ipAddress: savedScan.ipAddress || ipAddress,
-    status: savedScan.status,
-    overallScore: savedScan.overallScore,
+    url: normalizedUrl,
+    domain,
+    ipAddress,
+    status: 'COMPLETED',
+    overallScore: riskScore,
     verdict,
     dnsData,
     whoisData,

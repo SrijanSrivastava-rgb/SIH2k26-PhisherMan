@@ -15,37 +15,46 @@ export async function POST(req: Request) {
 
     // Run the security scanning engine pipeline
     const scanResult = await runSecurityScan(url);
+    let recordId = `scan_${Date.now()}`;
+    let createdAt = new Date().toISOString();
 
-    // Save scan result to Database
-    const savedRecord = await db.scanResult.create({
-      data: {
-        userId: user?.id || null,
-        url: scanResult.url,
-        domain: scanResult.domain,
-        ipAddress: scanResult.ipAddress,
-        status: 'COMPLETED',
-        overallScore: scanResult.overallScore,
-        verdict: scanResult.verdict,
-        dnsData: JSON.stringify(scanResult.dnsData),
-        whoisData: JSON.stringify(scanResult.whoisData),
-        sslData: JSON.stringify(scanResult.sslData),
-        domData: JSON.stringify(scanResult.domData),
-        visualData: JSON.stringify(scanResult.visualData),
-        aiExplanation: scanResult.aiExplanation,
-        stepTimings: JSON.stringify(scanResult.stepTimings),
-      },
-    });
+    // Try saving scan result to Database
+    try {
+      const savedRecord = await db.scanResult.create({
+        data: {
+          userId: user?.id || null,
+          url: scanResult.url,
+          domain: scanResult.domain,
+          ipAddress: scanResult.ipAddress,
+          status: 'COMPLETED',
+          overallScore: scanResult.overallScore,
+          verdict: scanResult.verdict,
+          dnsData: JSON.stringify(scanResult.dnsData),
+          whoisData: JSON.stringify(scanResult.whoisData),
+          sslData: JSON.stringify(scanResult.sslData),
+          domData: JSON.stringify(scanResult.domData),
+          visualData: JSON.stringify(scanResult.visualData),
+          aiExplanation: scanResult.aiExplanation,
+          stepTimings: JSON.stringify(scanResult.stepTimings),
+        },
+      });
+      recordId = savedRecord.id;
+      createdAt = savedRecord.createdAt.toISOString();
+    } catch (dbErr) {
+      console.warn('Scan DB record save skipped on serverless:', dbErr);
+    }
 
     return NextResponse.json({
       success: true,
-      id: savedRecord.id,
+      id: recordId,
       scan: {
-        id: savedRecord.id,
+        id: recordId,
         ...scanResult,
-        createdAt: savedRecord.createdAt,
+        createdAt,
       },
     });
   } catch (error: any) {
+    console.error('Scan execution error:', error);
     return NextResponse.json({ error: error.message || 'Scan execution failed.' }, { status: 500 });
   }
 }
