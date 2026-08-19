@@ -34,15 +34,36 @@ export default function HistoryPage() {
     const clockInterval = setInterval(updateClock, 1000);
 
     const loadHistory = async () => {
+      let serverScans: any[] = [];
       try {
         const res = await fetch('/api/history');
         if (res.ok) {
-          const data = await res.json();
-          setScans(data);
+          serverScans = await res.json();
         }
       } catch (err) {
         console.error('History API error:', err);
       }
+
+      let localScans: any[] = [];
+      try {
+        localScans = JSON.parse(localStorage.getItem('phisherman_local_scans') || '[]');
+      } catch {}
+
+      const combinedMap = new Map();
+      localScans.forEach((s: any) => {
+        if (s && (s.domain || s.url)) combinedMap.set(s.url || s.domain, s);
+      });
+      serverScans.forEach((s: any) => {
+        if (s && (s.domain || s.url) && !combinedMap.has(s.url || s.domain)) {
+          combinedMap.set(s.url || s.domain, s);
+        }
+      });
+
+      const mergedList = Array.from(combinedMap.values()).sort(
+        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
+      setScans(mergedList);
     };
     loadHistory();
 
